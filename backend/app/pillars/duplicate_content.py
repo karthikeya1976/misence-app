@@ -10,6 +10,8 @@ Near-duplicate comparison is a linear scan over stored fingerprints — fine at 
 move to an LSH / BK-tree index if the catalogue reaches the hundreds of thousands.
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import os

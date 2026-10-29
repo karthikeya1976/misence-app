@@ -8,6 +8,8 @@ Pure logic, no OpenCV: callers pass already-shrunk grayscale frames (HASH_ROWS x
 Limitation: frames are aligned by position, so a trimmed or re-cut video will not match.
 """
 
+from __future__ import annotations
+
 FRAME_COUNT = 5
 HASH_ROWS = 8
 HASH_COLS = 9  # one extra column so each row yields 8 left-vs-right comparisons

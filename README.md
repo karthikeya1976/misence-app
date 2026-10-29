@@ -4,7 +4,7 @@
 
 Creators upload scenes and shots; the platform runs them through a distributed moderation pipeline (nudity detection, AI/deepfake detection, duplicate check, filmmaking relevance) before they appear in the public reel feed. Viewers follow creators, give credits, and discover new filmmaking work.
 
-🌐 **Live**: https://distributed-video-moderation.vercel.app  
+🌐 **Live**: https://misence.vercel.app  
 🔌 **API**: https://redactor-api.duckdns.org
 
 ---
