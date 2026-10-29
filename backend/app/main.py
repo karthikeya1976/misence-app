@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from passlib.context import CryptContext
 from jose import jwt, JWTError
-from app import db, storage
+from app import db, metrics, storage
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from app.tasks import process_video
@@ -226,6 +226,7 @@ async def upload_video(
     if primary_department:
         db.set_video_department_tags(task_id, primary_department, additional)
     process_video.delay(task_id)
+    metrics.publish_queue_depth()
 
     # Flow-graph response: instant acknowledgment with tracking ID
     return {"status": "processing", "task_id": task_id}

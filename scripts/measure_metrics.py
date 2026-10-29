@@ -97,7 +97,8 @@ def measure_bench(args) -> dict:
         hdr["Authorization"] = f"Bearer {tok}"
         t0 = time.time()
         try:
-            job_id = _request("POST", f"{api}/videos", hdr, body, timeout=300)["job_id"]
+            resp = _request("POST", f"{api}/videos", hdr, body, timeout=300)
+            job_id = resp.get("task_id") or resp["job_id"]
         except urllib.error.HTTPError as e:
             rows.append({"path": c["path"], "error": f"upload HTTP {e.code}: {e.read()[:200]!r}"})
             continue

@@ -7,6 +7,7 @@ EC2 needs cloudwatch:PutMetricData (granted in infra/cloudformation.yml).
 import logging
 
 import boto3
+import redis
 
 from app import config
 
@@ -40,3 +41,19 @@ def record_queue_depth(depth: int) -> None:
 
 def record_dead_letter_depth(depth: int) -> None:
     _put("DeadLetterDepth", depth, "Count")
+
+
+def publish_queue_depth() -> None:
+    """Jobs waiting in the default Celery queue (a Redis list named after the queue).
+
+    Called by the API on every enqueue as well as by the worker: a dead worker publishes
+    nothing, so the API is the only reliable source of a backlog signal.
+    """
+    if not config.CLOUDWATCH_NAMESPACE:
+        return
+    try:
+        depth = int(redis.Redis.from_url(config.REDIS_URL).llen("celery"))
+    except Exception:
+        log.warning("could not read queue depth from Redis", exc_info=True)
+        return
+    record_queue_depth(depth)

@@ -3,7 +3,6 @@ import os
 from datetime import datetime, timezone
 
 import celery
-import redis
 from celery import Celery
 
 from app import config, db, dead_letter, metrics, storage
@@ -16,6 +15,16 @@ celery_app = Celery(
     broker=config.REDIS_URL,
     backend=config.REDIS_URL,
 )
+
+# A worker once sat connected-but-dead for weeks after a Redis "connection reset by peer"
+# (ElastiCache drops idle connections): keepalive + periodic PINGs make the dead socket surface
+# so kombu reconnects, and retries on timeout instead of hanging.
+celery_app.conf.broker_transport_options = {
+    "socket_keepalive": True,
+    "health_check_interval": 30,
+    "retry_on_timeout": True,
+}
+celery_app.conf.broker_connection_retry_on_startup = True
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2   # 2s, 4s, 8s (+ jitter), capped at RETRY_BACKOFF_MAX
@@ -35,11 +44,6 @@ async def _run_pillars(job_id: str) -> list[dict]:
         # Any single pillar failing means we cannot issue a trustworthy verdict.
         raise PillarError("; ".join(str(f) for f in failures))
     return results
-
-
-def _queue_depth() -> int:
-    """Jobs waiting in the default Celery queue (a Redis list named after the queue)."""
-    return int(redis.Redis.from_url(config.REDIS_URL).llen("celery"))
 
 
 def _seconds_since(created_at) -> float | None:
@@ -83,7 +87,7 @@ def process_video(job_id: str) -> None:
     if job is None:
         return
 
-    metrics.record_queue_depth(_queue_depth())
+    metrics.publish_queue_depth()
     db.update_job(job_id, {"status": "processing"})
 
     object_name = f"{job_id}.mp4"

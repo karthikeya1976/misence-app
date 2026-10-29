@@ -236,9 +236,14 @@
 - [x] Perceptual (dHash) near-duplicate detection → flagged; exact SHA-256 → blocked
 - [x] CloudWatch metrics: verdict latency, queue depth, dead-letter depth (opt-in via `CLOUDWATCH_NAMESPACE`)
 - [x] `backend/Dockerfile`, `scripts/push_ecr.sh`, CloudFormation IAM for metrics
-- [ ] Deploy to EC2 (stack update, `.env` line, OpenCV check, restart both services) and re-measure verdict latency with real APIs
-- [ ] Build the Docker image and push to ECR (needs a Docker daemon + AWS credentials)
-- [ ] CloudWatch alarm on `DeadLetterDepth > 0` (needs an SNS topic)
+- [x] Docker image built, smoke-tested and pushed to ECR (`misence-backend`)
+- [x] CloudWatch alarm `misence-dead-letter-jobs` (`DeadLetterDepth > 0`) + SNS topic `misence-alerts`
+- [x] Production worker found dead since 2026-10-06 and restarted; broker keepalive / health-check settings added; API now publishes `QueueDepth` on every enqueue
+- [ ] Subscribe an address to SNS topic `misence-alerts` (alarms currently notify nobody)
+- [ ] Attach the `CloudWatchMetrics` inline policy to `redactor-ec2-role` and set `CLOUDWATCH_NAMESPACE=Misence/Moderation` in `/app/.env` (metrics stay off until both are done)
+- [ ] Create a `QueueDepth` backlog alarm once metrics are flowing
+- [ ] Resolve the 6 new security-gate findings (human decision in `.ci/security-baseline.json`), merge the PR, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
+- [ ] Make the EC2 instance safely re-creatable from `infra/cloudformation.yml` (Elastic IP + UserData that matches the hand-built server) before anyone runs a stack update
 
 ## Pending / Future
 - [ ] Creator profile: list their approved videos inline

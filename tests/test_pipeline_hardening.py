@@ -106,7 +106,7 @@ def test_on_failure_holds_job_for_review_and_dead_letters(monkeypatch):
 def test_persistent_pillar_failure_retries_then_never_approves(monkeypatch):
     fake_db, attempts, pushed = _FakeDb(), [], []
     monkeypatch.setattr(tasks, "db", fake_db)
-    monkeypatch.setattr(tasks, "_queue_depth", lambda: 0)
+    monkeypatch.setattr(metrics, "publish_queue_depth", lambda: None)
     monkeypatch.setattr(tasks.storage, "get_video_path", lambda n: "/nonexistent")
     monkeypatch.setattr(dead_letter, "push", lambda j, e: pushed.append(j))
     monkeypatch.setattr(dead_letter, "depth", lambda: 1)
@@ -129,9 +129,8 @@ def test_persistent_pillar_failure_retries_then_never_approves(monkeypatch):
 def test_successful_job_records_verdict_and_latency(monkeypatch):
     fake_db, latencies = _FakeDb(), []
     monkeypatch.setattr(tasks, "db", fake_db)
-    monkeypatch.setattr(tasks, "_queue_depth", lambda: 2)
+    monkeypatch.setattr(metrics, "publish_queue_depth", lambda: None)
     monkeypatch.setattr(tasks.storage, "get_video_path", lambda n: "/nonexistent")
-    monkeypatch.setattr(metrics, "record_queue_depth", lambda d: None)
     monkeypatch.setattr(metrics, "record_verdict_latency", lambda s, v: latencies.append((s, v)))
 
     async def ok(job_id):
@@ -214,6 +213,48 @@ def test_metrics_emit_when_enabled(monkeypatch):
     assert names == ["VerdictLatencySeconds", "QueueDepth", "DeadLetterDepth"]
     assert fake.calls[0]["Namespace"] == "Misence/Moderation"
     assert fake.calls[0]["MetricData"][0]["Dimensions"] == [{"Name": "Verdict", "Value": "approved"}]
+
+
+class _FakeQueueRedis:
+    def __init__(self, depth=None, fail=False):
+        self.depth, self.fail, self.keys = depth, fail, []
+
+    def llen(self, key):
+        self.keys.append(key)
+        if self.fail:
+            raise ConnectionError("redis down")
+        return self.depth
+
+
+def test_publish_queue_depth_reads_celery_list_and_emits(monkeypatch):
+    cw, fake_redis = _FakeCloudWatch(), _FakeQueueRedis(depth=7)
+    monkeypatch.setattr(metrics, "_client", cw)
+    monkeypatch.setattr(metrics.config, "CLOUDWATCH_NAMESPACE", "Misence/Moderation")
+    monkeypatch.setattr(metrics.redis.Redis, "from_url", staticmethod(lambda url: fake_redis))
+    metrics.publish_queue_depth()
+    assert fake_redis.keys == ["celery"]
+    assert cw.calls[0]["MetricData"][0]["MetricName"] == "QueueDepth"
+    assert cw.calls[0]["MetricData"][0]["Value"] == 7
+
+
+def test_publish_queue_depth_is_a_noop_when_disabled_or_redis_is_down(monkeypatch):
+    cw = _FakeCloudWatch()
+    monkeypatch.setattr(metrics, "_client", cw)
+    touched = []
+    monkeypatch.setattr(metrics.redis.Redis, "from_url", staticmethod(lambda url: touched.append(url)))
+    monkeypatch.setattr(metrics.config, "CLOUDWATCH_NAMESPACE", "")
+    metrics.publish_queue_depth()
+    assert touched == [] and cw.calls == []          # disabled: never even connects to Redis
+
+    monkeypatch.setattr(metrics.config, "CLOUDWATCH_NAMESPACE", "Misence/Moderation")
+    monkeypatch.setattr(metrics.redis.Redis, "from_url", staticmethod(lambda url: _FakeQueueRedis(fail=True)))
+    metrics.publish_queue_depth()                    # must not raise: an upload must never fail on metrics
+    assert cw.calls == []
+
+
+def test_celery_broker_has_keepalive_and_health_checks():
+    opts = tasks.celery_app.conf.broker_transport_options
+    assert opts["socket_keepalive"] is True and opts["health_check_interval"] == 30
 
 
 def test_metrics_failure_never_propagates(monkeypatch):
