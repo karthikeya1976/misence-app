@@ -72,7 +72,12 @@ def run(args) -> dict:
                 if st.get("status") in ("done", "failed"):
                     break
                 time.sleep(0.5)
-            row.update(total_s=time.time() - t0, status=st.get("status"), verdict=st.get("overall_status"))
+            # A pillar that errored (quota, timeout, ...) silently substitutes a mock score in the
+            # pre-fail-closed code: such a job finishes fast without doing real work and must not
+            # be counted in latency / throughput.
+            flags = [f for p in st.get("pillars") or [] for f in p.get("flags", [])]
+            fallback = any(f.get("label") == "check_error" or "mock" in str(f.get("detail", "")) for f in flags)
+            row.update(total_s=time.time() - t0, status=st.get("status"), verdict=st.get("overall_status"), fallback=fallback)
         except Exception as e:  # noqa: BLE001 - report every failure mode, don't crash the burst
             row["error"] = f"{type(e).__name__}: {e}"
         results[i] = row
@@ -85,17 +90,20 @@ def run(args) -> dict:
         t.join()
     wall = time.time() - start
 
-    done = [r for r in results if r and r.get("status") == "done"]
+    finished = [r for r in results if r and r.get("status") == "done"]
+    done = [r for r in finished if not r.get("fallback")]          # real work only
     acks = [r["ack_s"] for r in results if r and "ack_s" in r]
     totals = [r["total_s"] for r in done]
     out = {
         "uploads": args.uploads,
-        "completed": len(done),
+        "completed_real": len(done),
+        "completed_with_mock_or_error_fallback": len(finished) - len(done),
         "errors": [r["error"] for r in results if r and "error" in r],
         "not_finished": sum(1 for r in results if r and "error" not in r and r.get("status") not in ("done", "failed")),
         "failed_or_needs_review": sum(1 for r in results if r and (r.get("status") == "failed" or r.get("verdict") == "needs_review")),
         "verdicts": {v: sum(1 for r in done if r["verdict"] == v) for v in {r["verdict"] for r in done}},
         "wall_clock_s": round(wall, 1),
+        "note": "latency/throughput below cover real-work jobs only; fallback jobs are excluded",
     }
     if acks:
         out["ack_latency_s"] = {"median": round(statistics.median(acks), 2), "p95": round(_pct(acks, 0.95), 2), "max": round(max(acks), 2)}

@@ -35,7 +35,7 @@
 - [x] EC2 t3.small (Amazon Linux 2023)
 - [x] Nginx + Let's Encrypt TLS via DuckDNS (`redactor-api.duckdns.org`)
 - [x] Systemd services: `redactor-api` + `redactor-celery` (auto-restart)
-- [x] Frontend deployed to Vercel (`https://distributed-video-moderation.vercel.app`)
+- [x] Frontend deployed to Vercel (`https://misence.vercel.app`)
 - [x] End-to-end verified: register → login → upload → S3 → Celery → RDS → feed
 
 ## Editor Club — Social Features (2026-09-10) ✅
@@ -244,7 +244,9 @@
 - [ ] Create a `QueueDepth` backlog alarm once metrics are flowing
 - [ ] Resolve the 6 new security-gate findings (human decision in `.ci/security-baseline.json`), merge the PR, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
 - [x] Python 3.9 compatibility fix + AST guard test (`tests/test_python39_compat.py`), verified in a `python:3.9-slim` container
-- [x] Load-test tool (`scripts/load_test.py`) + baseline on the pre-fix production code (12-upload burst: 147.5 s, 4.9 jobs/min, ack median 1.6 s)
+- [x] Load-test tool (`scripts/load_test.py`) + baseline on the pre-fix production code (8 real jobs: ~16 s each, 3.7 jobs/min; ack median 1.6 s). The run exhausted the Sightengine daily quota -> 4 jobs used mock fallbacks and were excluded
+- [ ] Deploy #52/#53 so pillar failures fail closed (until then, a provider outage / quota exhaustion silently yields mock nudity+deepfake scores in production)
+- [ ] Decide on Sightengine capacity: free plan has a daily cap (~10 calls/video); consider a paid plan or sampling fewer frames
 - [ ] Re-run `scripts/measure_metrics.py bench` and `scripts/load_test.py` after #52/#53 are deployed; run a multi-worker scaling comparison
 - [ ] Upgrade the server's Python to 3.11+ so the pinned `python-multipart` / `python-dotenv` (security PR #50) can actually be installed there
 - [ ] Fix the `Update Test Baseline` workflow now that `main` is protected (bot push is rejected)
