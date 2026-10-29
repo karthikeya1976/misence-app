@@ -244,6 +244,8 @@
 - [ ] Create a `QueueDepth` backlog alarm once metrics are flowing
 - [ ] Resolve the 6 new security-gate findings (human decision in `.ci/security-baseline.json`), merge the PR, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
 - [x] Python 3.9 compatibility fix + AST guard test (`tests/test_python39_compat.py`), verified in a `python:3.9-slim` container
+- [x] Load-test tool (`scripts/load_test.py`) + baseline on the pre-fix production code (12-upload burst: 147.5 s, 4.9 jobs/min, ack median 1.6 s)
+- [ ] Re-run `scripts/measure_metrics.py bench` and `scripts/load_test.py` after #52/#53 are deployed; run a multi-worker scaling comparison
 - [ ] Upgrade the server's Python to 3.11+ so the pinned `python-multipart` / `python-dotenv` (security PR #50) can actually be installed there
 - [ ] Fix the `Update Test Baseline` workflow now that `main` is protected (bot push is rejected)
 - [ ] Make the EC2 instance safely re-creatable from `infra/cloudformation.yml` (Elastic IP + UserData that matches the hand-built server) before anyone runs a stack update
