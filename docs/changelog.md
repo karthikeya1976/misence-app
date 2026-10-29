@@ -519,3 +519,20 @@ Both scripts were deliberately tested against `docs/plans/2026-09-22-001-feat-ho
 - Perceptual-hash accuracy was only checked on synthetic photo-like video (resized / re-encoded / brightened copies: distance 0-0.2; unrelated videos: 30-35; threshold 10), not on real film footage. A first attempt with flat-colour clips gave meaningless distances (15 vs 18) because dHash needs gradients — `tests/test_phash_opencv.py` uses textured frames and skips when OpenCV is absent.
 - CloudFormation changes only affect a *new* stack. The existing EC2 instance needs: stack update for the IAM policy, `CLOUDWATCH_NAMESPACE=Misence/Moderation` appended to `/app/.env`, `opencv-python-headless` confirmed installed in the venv, then `sudo systemctl restart redactor-api redactor-celery`. The `phash` column is added automatically on API startup.
 - Near-duplicate matching is a linear scan over stored fingerprints, aligned by frame position — a trimmed or re-cut video will not match.
+
+## 2026-10-29 — Production is Python 3.9: compatibility fix + guard (found by smoke-testing before restart)
+
+### What happened
+Fast-forwarding the EC2 checkout to the merged PR #52 and import-testing as the service user (before restarting anything) failed: `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'` in `metrics.py`. The server's system `python3` is **3.9.25**; the new modules used PEP 604 `X | None` annotations, which are a runtime error before 3.10. CI and dev machines run 3.12, so nothing caught it. The running services were never restarted, so there was no outage; the server checkout was rolled back to the known-good `92caf0a` until the fix was ready.
+
+### Changes
+- `from __future__ import annotations` added to `metrics.py`, `phash.py`, `pillars/duplicate_content.py`, `tasks.py`.
+- `tests/test_python39_compat.py`: AST guard that fails if any backend module uses `X | Y` in an annotation without the `__future__` import (the exact bug class), plus a test that the guard detects it.
+
+### Verification
+- Full suite run inside `python:3.9-slim` (3.9.25, same patch version as the server): all backend modules import; 39 passed, 4 skipped (live-DB). The two R&D CI-tooling test files are excluded there because the scripts they test only run on CI's 3.12.
+
+### Still open (found, not fixed here)
+- `backend/requirements.txt` pins `python-multipart==0.0.32` and `python-dotenv==1.2.2`, which **do not exist for Python 3.9** (latest 3.9 builds: 0.0.20 and 1.2.1). That is why the server has `python-multipart 0.0.20`: the dependency bump from the JWT/security PR (#50) cannot be applied to production as long as it runs 3.9. Fix = move the server to Python 3.11+ (Amazon Linux 2023 ships `python3.11`) and update the systemd `ExecStart` lines; until then the pinned versions are only correct for CI / Docker (3.12).
+- The Docker image uses Python 3.12 while production uses 3.9 — the image is not a faithful rehearsal of production until the server is upgraded.
+- The "Update Test Baseline" workflow fails on `main` since branch protection was enabled (`GH006: Protected branch update failed`); the regression baseline is therefore stale.

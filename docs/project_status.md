@@ -243,6 +243,9 @@
 - [ ] Attach the `CloudWatchMetrics` inline policy to `redactor-ec2-role` and set `CLOUDWATCH_NAMESPACE=Misence/Moderation` in `/app/.env` (metrics stay off until both are done)
 - [ ] Create a `QueueDepth` backlog alarm once metrics are flowing
 - [ ] Resolve the 6 new security-gate findings (human decision in `.ci/security-baseline.json`), merge the PR, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
+- [x] Python 3.9 compatibility fix + AST guard test (`tests/test_python39_compat.py`), verified in a `python:3.9-slim` container
+- [ ] Upgrade the server's Python to 3.11+ so the pinned `python-multipart` / `python-dotenv` (security PR #50) can actually be installed there
+- [ ] Fix the `Update Test Baseline` workflow now that `main` is protected (bot push is rejected)
 - [ ] Make the EC2 instance safely re-creatable from `infra/cloudformation.yml` (Elastic IP + UserData that matches the hand-built server) before anyone runs a stack update
 
 ## Pending / Future
