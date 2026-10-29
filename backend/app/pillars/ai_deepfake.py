@@ -8,6 +8,7 @@ Score: 0.0 (real) → 1.0 (AI-generated / deepfake).
 Threshold: score >= 0.7 → flagged.
 """
 
+import asyncio
 import os
 import tempfile
 import urllib.request
@@ -17,7 +18,7 @@ import json
 import boto3
 
 from app import config
-from app.pillars.common import score_from_seed
+from app.pillars.common import PillarError, score_from_seed
 
 _DEEPFAKE_THRESHOLD = 0.7
 
@@ -47,8 +48,8 @@ def _get_s3_client():
     return boto3.client("s3", region_name=config.AWS_S3_REGION, **creds)
 
 
-async def check(job_id: str) -> dict:
-    # Fall back to mock if Sightengine credentials are not configured
+def _check_blocking(job_id: str) -> dict:
+    # Local dev only: no Sightengine credentials configured -> deterministic mock score
     if not config.SIGHTENGINE_USER or not config.SIGHTENGINE_SECRET:
         score = score_from_seed(f"deepfake:{job_id}")
         flags = []
@@ -105,9 +106,9 @@ async def check(job_id: str) -> dict:
         return {"pillar": "ai_deepfake", "score": round(worst_score, 3), "flags": flags}
 
     except Exception as e:
-        score = score_from_seed(f"deepfake:{job_id}")
-        return {
-            "pillar": "ai_deepfake",
-            "score": round(score, 3),
-            "flags": [{"label": "check_error", "detail": str(e)}],
-        }
+        raise PillarError(f"ai_deepfake: {e}") from e
+
+
+async def check(job_id: str) -> dict:
+    # Blocking I/O (S3, OpenCV, HTTP) runs off the event loop so the four pillars truly overlap.
+    return await asyncio.to_thread(_check_blocking, job_id)

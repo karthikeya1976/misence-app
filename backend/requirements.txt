@@ -32,3 +32,6 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 boto3==1.35.71
 python-dotenv==1.2.2
+# Frame sampling for the adult-content / deepfake / filmmaking / perceptual-hash pillars.
+# Previously installed by hand on EC2 only; without it a real deployment cannot extract frames.
+opencv-python-headless==4.10.0.84

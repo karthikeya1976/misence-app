@@ -107,3 +107,22 @@ class TestAggregationPriority:
         # not crash and not affect the verdict — keeps pillars.check() plug-and-play
         verdict = aggregate([result("some_future_pillar", 0.99)])
         assert verdict["overall_status"] == "approved"
+
+
+# -- Duplicate pillar: exact vs near-duplicate --------------------------------
+
+def test_near_duplicate_is_flagged_not_blocked():
+    # Pillar scores a perceptual (re-encoded / resized) match 0.85: held for review, not auto-blocked.
+    out = aggregate([result("duplicate_content", 0.85), result("filmmaking_relevance", 1.0)])
+    assert out["overall_status"] == "flagged"
+    assert "duplicate_content" in out["reasons"][0]
+
+
+def test_exact_duplicate_is_still_blocked():
+    out = aggregate([result("duplicate_content", 1.0), result("filmmaking_relevance", 1.0)])
+    assert out["overall_status"] == "blocked"
+
+
+def test_unique_video_is_not_flagged_by_duplicate_pillar():
+    out = aggregate([result("duplicate_content", 0.0), result("filmmaking_relevance", 1.0)])
+    assert out["overall_status"] == "approved"

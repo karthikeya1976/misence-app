@@ -31,3 +31,7 @@ SIGHTENGINE_SECRET = os.environ.get("SIGHTENGINE_SECRET", "")
 
 # AWS Rekognition — filmmaking relevance (uses same IAM role as S3 on EC2)
 # No extra keys needed on EC2; local dev can reuse AWS_ACCESS_KEY_ID/SECRET above.
+
+# CloudWatch custom metrics (verdict latency, queue depth, dead-letter depth).
+# Empty = metrics disabled (local dev, CI). EC2 sets Misence/Moderation via the CloudFormation UserData.
+CLOUDWATCH_NAMESPACE = os.environ.get("CLOUDWATCH_NAMESPACE", "")

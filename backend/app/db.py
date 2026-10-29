@@ -211,6 +211,7 @@ def _ensure_schema() -> None:
             # Column migrations — safe to re-run because of IF NOT EXISTS
             cur.execute("ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_id TEXT")
             cur.execute("ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_hash TEXT")
+            cur.execute("ALTER TABLE videos ADD COLUMN IF NOT EXISTS phash TEXT")
             cur.execute("ALTER TABLE users  ADD COLUMN IF NOT EXISTS credits INTEGER NOT NULL DEFAULT 0")
             cur.execute("ALTER TABLE users  ADD COLUMN IF NOT EXISTS department TEXT")
             cur.execute(_BACKFILL_MISSING_PRIMARY_TAGS)
@@ -557,6 +558,15 @@ def find_duplicate_hash(file_hash: str, exclude_job_id: str) -> bool:
         with conn.cursor() as cur:
             cur.execute(sql, (file_hash, exclude_job_id))
             return cur.fetchone() is not None
+
+
+def list_phashes(exclude_job_id: str) -> list[tuple[str, str]]:
+    """(job_id, perceptual fingerprint) of every other completed video, for near-duplicate matching."""
+    sql = "SELECT id, phash FROM videos WHERE phash IS NOT NULL AND id != %s AND status = 'done'"
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (exclude_job_id,))
+            return [(str(r[0]), r[1]) for r in cur.fetchall()]
 
 
 # ── Credits ──────────────────────────────────────────────────────────────────

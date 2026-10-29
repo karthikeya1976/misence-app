@@ -17,7 +17,7 @@ import urllib.parse
 import boto3
 
 from app import config
-from app.pillars.common import score_from_seed
+from app.pillars.common import PillarError, score_from_seed
 
 _NUDITY_THRESHOLD = 0.7
 
@@ -60,8 +60,8 @@ def _presigned_url_for_frame(s3, bucket: str, key: str) -> str:
     )
 
 
-async def check(job_id: str) -> dict:
-    # Fall back to mock if Sightengine credentials are not configured
+def _check_blocking(job_id: str) -> dict:
+    # Local dev only: no Sightengine credentials configured -> deterministic mock score
     if not config.SIGHTENGINE_USER or not config.SIGHTENGINE_SECRET:
         score = score_from_seed(f"adult:{job_id}")
         flags = []
@@ -117,10 +117,11 @@ async def check(job_id: str) -> dict:
         return {"pillar": "adult_content", "score": round(worst_score, 3), "flags": flags}
 
     except Exception as e:
-        # On any error fall back to mock so the pipeline doesn't break
-        score = score_from_seed(f"adult:{job_id}")
-        return {
-            "pillar": "adult_content",
-            "score": round(score, 3),
-            "flags": [{"label": "check_error", "detail": str(e)}],
-        }
+        # Never substitute a made-up score for a real provider failure: let the task retry,
+        # then send the job to human review (see tasks.ModerationTask.on_failure).
+        raise PillarError(f"adult_content: {e}") from e
+
+
+async def check(job_id: str) -> dict:
+    # Blocking I/O (S3, OpenCV, HTTP) runs off the event loop so the four pillars truly overlap.
+    return await asyncio.to_thread(_check_blocking, job_id)

@@ -48,7 +48,8 @@ Content   (Sightengine) Content    Relevance
 - **Same-origin proxy**: Next.js rewrites `/api/backend/*` → `https://redactor-api.duckdns.org/*` at the Vercel edge — eliminates mixed-content blocks with zero env-var config
 - **Pillars are swappable**: each exposes `async def check(job_id) -> dict` — mock vs real API is one file change
 - **S3 objects are kept** after processing so the feed streams via presigned URLs
-- **Duplicate detection** uses SHA-256 hash — exact-match, zero API cost
+- **Duplicate detection** uses SHA-256 (exact → blocked) plus a perceptual dHash of 5 frames (near-duplicate → flagged) — zero API cost
+- **Pillars run concurrently and fail closed**: blocking I/O is moved off the event loop with `asyncio.to_thread`; a pillar error is retried (max 3, backoff), then the video is held as `needs_review` and dead-lettered rather than approved
 - **Filmmaking relevance uses inverse scoring** — low score = off-topic = blocked
 - **Smart feed**: enrouted (followed creators) content first, then recommendations ranked by creator credits + recency
 
@@ -94,7 +95,7 @@ Content   (Sightengine) Content    Relevance
 |--------|-----|-----------|--------|
 | `adult_content` | Sightengine nudity-2.1 | score ≥ 0.8 → blocked, ≥ 0.5 → flagged | Only explicit nudity |
 | `ai_deepfake` | Sightengine genai | score ≥ 0.7 → flagged | AI-generated / synthetic media |
-| `duplicate_content` | SHA-256 S3 hash | score = 1.0 → blocked | Same file already on platform |
+| `duplicate_content` | SHA-256 S3 hash + dHash of 5 frames | 1.0 → blocked, 0.85 → flagged | Same / visually near-identical file already on platform |
 | `filmmaking_relevance` | AWS Rekognition DetectLabels | score < 0.3 → blocked | Off-topic content removed |
 
 ---

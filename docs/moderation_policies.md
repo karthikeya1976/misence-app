@@ -42,15 +42,18 @@ Flagged AI content remains visible in the feed with a disclosure label (future w
 
 ## Pillar 3: Duplicate Content (`duplicate_content.py`)
 
-**Method**: SHA-256 hash of the full S3 video object  
-**Score**: `1.0` if identical file already exists on platform, `0.0` otherwise
+**Method**: SHA-256 hash of the full S3 video object (exact match) plus a perceptual dHash of 5 frames (near match)  
+**Score**: `1.0` byte-identical copy already on the platform, `0.85` visually near-identical copy (re-encoded / resized), `0.0` otherwise
 
 | Score | Verdict contribution |
 |-------|---------------------|
 | `1.0` | **Blocked** |
+| `0.85` | **Flagged** (`>= 0.8`) |
 | `0.0` | No contribution |
 
-Zero API cost, exact-match only. Perceptual similarity detection is not implemented.
+Method detail: after the exact SHA-256 check, a perceptual dHash fingerprint of 5 evenly spaced frames is compared with every stored fingerprint. Near-duplicate = mean Hamming distance across aligned frames <= 10 of 64 bits (`phash.NEAR_DUPLICATE_MAX_DISTANCE`). Zero API cost. Limitations: frames are aligned by position, so trimmed / re-cut videos do not match; the comparison is a linear scan over stored fingerprints.
+
+**Failure policy (all pillars)**: a pillar that errors against a real backend raises instead of returning a mock score. The job is retried (max 3, exponential backoff); if it still fails it is held as `overall_status = needs_review` — hidden from every feed — and dead-lettered for a human.
 
 ---
 
@@ -103,5 +106,5 @@ else:
 |--------|-------|------|-----------|
 | `adult_content` | `>= 0.8` | `>= 0.5` | Higher = worse |
 | `ai_deepfake` | — | `>= 0.7` | Higher = worse |
-| `duplicate_content` | `= 1.0` | — | Higher = worse |
+| `duplicate_content` | `= 1.0` | `>= 0.8` | Higher = worse |
 | `filmmaking_relevance` | `< 0.3` | — | **Lower = worse** |

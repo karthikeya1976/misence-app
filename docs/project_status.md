@@ -229,6 +229,17 @@
 - [ ] `dispatch-workers`' actual per-unit Worker Agent invocation step — documented `TODO`, deliberately unwritten (see `docs/rd-department-setup.md`)
 - [ ] Real end-to-end dry run (manual `workflow_dispatch`) not yet performed — first real invocation should be closely supervised, not the real cron
 
+## Pipeline Hardening (2026-10-29)
+- [x] Pillars run truly concurrently (`asyncio.to_thread`) — regression-tested
+- [x] Celery retries with backoff (max 3); persistent failure is fail-closed (`needs_review`, hidden from feeds) and dead-lettered
+- [x] `scripts/replay_dlq.py` to list / replay dead-lettered jobs
+- [x] Perceptual (dHash) near-duplicate detection → flagged; exact SHA-256 → blocked
+- [x] CloudWatch metrics: verdict latency, queue depth, dead-letter depth (opt-in via `CLOUDWATCH_NAMESPACE`)
+- [x] `backend/Dockerfile`, `scripts/push_ecr.sh`, CloudFormation IAM for metrics
+- [ ] Deploy to EC2 (stack update, `.env` line, OpenCV check, restart both services) and re-measure verdict latency with real APIs
+- [ ] Build the Docker image and push to ECR (needs a Docker daemon + AWS credentials)
+- [ ] CloudWatch alarm on `DeadLetterDepth > 0` (needs an SNS topic)
+
 ## Pending / Future
 - [ ] Creator profile: list their approved videos inline
 - [ ] Notifications for new followers and credits received

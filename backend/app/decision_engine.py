@@ -10,8 +10,9 @@ BLOCK_THRESHOLDS = {
 }
 
 FLAG_THRESHOLDS = {
-    "adult_content": 0.5,   # borderline nudity → flagged for review
-    "ai_deepfake": 0.7,     # likely AI-generated → flagged
+    "adult_content": 0.5,       # borderline nudity → flagged for review
+    "ai_deepfake": 0.7,         # likely AI-generated → flagged
+    "duplicate_content": 0.8,   # visually near-identical re-upload (score 0.85) → flagged
 }
 
 # Pillars where a LOW score triggers a block (relevance checks, not harm checks)
