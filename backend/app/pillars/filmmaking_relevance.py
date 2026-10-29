@@ -8,13 +8,14 @@ Score: 0.0 (not filmmaking) → 1.0 (clearly filmmaking content).
 Threshold: score < 0.3 → blocked (inverse scoring — low score is bad).
 """
 
+import asyncio
 import os
 import tempfile
 
 import boto3
 
 from app import config
-from app.pillars.common import score_from_seed
+from app.pillars.common import PillarError, score_from_seed
 
 _RELEVANCE_THRESHOLD = 0.3
 
@@ -56,11 +57,14 @@ def _get_boto_clients():
     return s3, rek
 
 
-async def check(job_id: str) -> dict:
-    # Fall back to mock if running locally without Rekognition access
+def _check_blocking(job_id: str) -> dict:
     try:
         import cv2
-    except ImportError:
+    except ImportError as e:
+        if config.AWS_S3_BUCKET:
+            # Real deployment without OpenCV is a broken install, not a reason to guess a score.
+            raise PillarError(f"filmmaking_relevance: OpenCV not installed ({e})") from e
+        # Local dev without S3/OpenCV -> deterministic mock score
         score = score_from_seed(f"filmmaking:{job_id}")
         flags = []
         if score < _RELEVANCE_THRESHOLD:
@@ -115,9 +119,9 @@ async def check(job_id: str) -> dict:
         return {"pillar": "filmmaking_relevance", "score": round(score, 3), "flags": flags}
 
     except Exception as e:
-        # Fall back to mock on any error
-        score = score_from_seed(f"filmmaking:{job_id}")
-        flags = []
-        if score < _RELEVANCE_THRESHOLD:
-            flags.append({"label": "not_filmmaking_content", "detail": f"check_error: {e}"})
-        return {"pillar": "filmmaking_relevance", "score": round(score, 3), "flags": flags}
+        raise PillarError(f"filmmaking_relevance: {e}") from e
+
+
+async def check(job_id: str) -> dict:
+    # Blocking I/O (S3, OpenCV, HTTP) runs off the event loop so the four pillars truly overlap.
+    return await asyncio.to_thread(_check_blocking, job_id)

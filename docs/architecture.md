@@ -109,12 +109,13 @@ videos (
   filename       TEXT,
   file_path      TEXT,               -- s3://bucket/object
   status         TEXT,               -- pending | processing | done
-  overall_status TEXT,               -- approved | flagged | blocked
+  overall_status TEXT,               -- approved | flagged | blocked | needs_review (moderation failed; hidden)
   pillar_results JSONB,
   reasons        JSONB,
   size_bytes     INTEGER,
   user_id        UUID REFERENCES users(id),
   file_hash      TEXT,               -- SHA-256 for duplicate detection
+  phash          TEXT,               -- 5 x 64-bit dHash frames (80 hex chars) for near-duplicate detection
   created_at     TIMESTAMPTZ,
   updated_at     TIMESTAMPTZ
 )
@@ -214,13 +215,12 @@ dismissed_videos (
 
 ### Task Queue (`backend/app/tasks.py`)
 - `process_video(task_id)` Celery task:
-  1. Sets `status = "processing"` in DB
-  2. Downloads video from S3 to temp file
-  3. Extracts 5 frames with OpenCV → uploads to S3
-  4. Runs all four pillar checks concurrently (`asyncio.gather`)
-  5. Passes results to Decision Engine
-  6. Writes final `pillar_results`, `overall_status`, `reasons` to DB; sets `status = "done"`
-  7. Cleans up temp file and frame S3 objects
+  1. Emits the `QueueDepth` metric, sets `status = "processing"` in DB
+  2. Runs all four pillar checks concurrently — each pillar's blocking I/O (S3, OpenCV, HTTP, Postgres) runs in a worker thread via `asyncio.to_thread`, gathered with `asyncio.gather`; each pillar downloads the object and extracts its own frames
+  3. Any pillar raising `PillarError` fails the attempt; Celery retries with exponential backoff + jitter (2 s base, 60 s cap, max 3 retries)
+  4. Passes results to Decision Engine
+  5. Writes final `pillar_results`, `overall_status`, `reasons` to DB; sets `status = "done"`; emits `VerdictLatencySeconds`
+  6. If retries are exhausted (`ModerationTask.on_failure`): `status = "failed"`, `overall_status = "needs_review"` (outside the `approved`/`flagged` feed filter, so hidden), job pushed to the Redis dead-letter list `dlq:process_video`, `DeadLetterDepth` emitted. Inspect / replay with `scripts/replay_dlq.py`.
 
 ### Moderation Pillars (`backend/app/pillars/`)
 
@@ -234,10 +234,10 @@ async def check(job_id: str) -> dict
 |------|-----|----------------|
 | `adult_content.py` | Sightengine nudity-2.1 | Explicit / suggestive imagery |
 | `ai_deepfake.py` | Sightengine genai | AI-generated / synthetic video |
-| `duplicate_content.py` | SHA-256 of S3 object | Identical file already on platform |
+| `duplicate_content.py` | SHA-256 of S3 object + dHash of 5 frames (`phash.py`) | Identical (blocked) or visually near-identical (flagged) file already on platform |
 | `filmmaking_relevance.py` | AWS Rekognition DetectLabels | Scene labels match filmmaking vocabulary |
 
-Pillars are swappable: replacing a mock with a real API client means editing one file, not the orchestration code.
+Pillars are swappable: replacing a mock with a real API client means editing one file, not the orchestration code. Each module keeps its blocking body in `_check_blocking()` and exposes `check()` as the `asyncio.to_thread` wrapper. Mock scores exist only for local dev without credentials; real-backend errors raise `PillarError`.
 
 ### Decision Engine (`backend/app/decision_engine.py`)
 Reads all four pillar results, applies thresholds from `docs/moderation_policies.md`:
@@ -508,7 +508,11 @@ doesn't reproduce the bug — it dispatches events differently).
 | Let's Encrypt | DuckDNS `redactor-api.duckdns.org` | Auto-renewed HTTPS cert |
 | Vercel | Next.js | `https://distributed-video-moderation.vercel.app` |
 
-Defined in `infra/cloudformation.yml`. EC2 systemd services: `redactor-api` and `redactor-celery`.
+Defined in `infra/cloudformation.yml` (CloudFormation — not Terraform). EC2 systemd services: `redactor-api` and `redactor-celery`. **Caution**: the live instance was configured by hand and has no Elastic IP; a `UserData` change in the template marks the instance for conditional replacement, so never execute a stack update on `redactor-v2` without reviewing a change set.
+
+**Observability**: when `CLOUDWATCH_NAMESPACE` is set (`Misence/Moderation` on EC2) the worker publishes `VerdictLatencySeconds` (dimension `Verdict`), `QueueDepth` and `DeadLetterDepth`. The instance role grants `cloudwatch:PutMetricData` restricted to that namespace.
+
+**Containers**: `backend/Dockerfile` builds one image used for both roles (`uvicorn app.main:app` by default; override the command for `celery -A app.tasks worker`). `scripts/push_ecr.sh` builds and pushes it to ECR. The current deployment still runs the code directly under systemd, not the image.
 
 ---
 

@@ -220,6 +220,18 @@ Resources:
                 Resource:
                   - !Sub arn:aws:s3:::${S3Bucket}
                   - !Sub arn:aws:s3:::${S3Bucket}/*
+        # Custom metrics (verdict latency, queue depth, dead-letter depth) — PutMetricData has no
+        # resource-level scoping, so the namespace condition is the tightest available restriction.
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: Misence/Moderation
 
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -258,7 +270,7 @@ Resources:
           pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" celery redis psycopg2-binary \
                       "python-jose[cryptography]" "passlib[bcrypt]" boto3 \
-                      python-dotenv python-multipart "bcrypt==4.0.1"
+                      python-dotenv python-multipart "bcrypt==4.0.1" \n                      opencv-python-headless==4.10.0.84
 
           # Write .env with injected endpoints
           cat > /app/.env <<'ENVEOF'
@@ -268,6 +280,7 @@ Resources:
           AWS_S3_REGION=${AWS::Region}
           JWT_SECRET=${JWTSecret}
           UPLOAD_DIR=/tmp/video_uploads
+          CLOUDWATCH_NAMESPACE=Misence/Moderation
           ENVEOF
 
           mkdir -p /tmp/video_uploads

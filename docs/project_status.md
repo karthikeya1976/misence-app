@@ -229,6 +229,22 @@
 - [ ] `dispatch-workers`' actual per-unit Worker Agent invocation step — documented `TODO`, deliberately unwritten (see `docs/rd-department-setup.md`)
 - [ ] Real end-to-end dry run (manual `workflow_dispatch`) not yet performed — first real invocation should be closely supervised, not the real cron
 
+## Pipeline Hardening (2026-10-29)
+- [x] Pillars run truly concurrently (`asyncio.to_thread`) — regression-tested
+- [x] Celery retries with backoff (max 3); persistent failure is fail-closed (`needs_review`, hidden from feeds) and dead-lettered
+- [x] `scripts/replay_dlq.py` to list / replay dead-lettered jobs
+- [x] Perceptual (dHash) near-duplicate detection → flagged; exact SHA-256 → blocked
+- [x] CloudWatch metrics: verdict latency, queue depth, dead-letter depth (opt-in via `CLOUDWATCH_NAMESPACE`)
+- [x] `backend/Dockerfile`, `scripts/push_ecr.sh`, CloudFormation IAM for metrics
+- [x] Docker image built, smoke-tested and pushed to ECR (`misence-backend`)
+- [x] CloudWatch alarm `misence-dead-letter-jobs` (`DeadLetterDepth > 0`) + SNS topic `misence-alerts`
+- [x] Production worker found dead since 2026-10-06 and restarted; broker keepalive / health-check settings added; API now publishes `QueueDepth` on every enqueue
+- [ ] Subscribe an address to SNS topic `misence-alerts` (alarms currently notify nobody)
+- [ ] Attach the `CloudWatchMetrics` inline policy to `redactor-ec2-role` and set `CLOUDWATCH_NAMESPACE=Misence/Moderation` in `/app/.env` (metrics stay off until both are done)
+- [ ] Create a `QueueDepth` backlog alarm once metrics are flowing
+- [ ] Resolve the 6 new security-gate findings (human decision in `.ci/security-baseline.json`), merge the PR, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
+- [ ] Make the EC2 instance safely re-creatable from `infra/cloudformation.yml` (Elastic IP + UserData that matches the hand-built server) before anyone runs a stack update
+
 ## Pending / Future
 - [ ] Creator profile: list their approved videos inline
 - [ ] Notifications for new followers and credits received

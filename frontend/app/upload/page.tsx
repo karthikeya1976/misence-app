@@ -34,11 +34,13 @@ const RESULT_STYLE: Record<string, React.CSSProperties> = {
   approved: { border: "1px solid #c2542344", background: "#c254230d" },
   flagged:  { border: "1px solid #b4550044", background: "#b455000d" },
   blocked:  { border: "1px solid #7f1d1d55", background: "#7f1d1d0d" },
+  needs_review: { border: "1px solid #b4550044", background: "#b455000d" },
 };
 const RESULT_COLOR: Record<string, string> = {
   approved: "#e08a5f",
   flagged:  "#fb923c",
   blocked:  "#f87171",
+  needs_review: "#fb923c",
 };
 
 type Format = "scene" | "shot";
@@ -119,7 +121,7 @@ export default function UploadPage() {
       const { task_id } = await uploadVideo(file, additionalDepts);
       pollRef.current = setInterval(async () => {
         const s = await getJobStatus(task_id);
-        if (s.status === "done") {
+        if (s.status === "done" || s.status === "failed") {
           clearInterval(pollRef.current!);
           setJob(s);
           setUploading(false);
@@ -330,7 +332,7 @@ export default function UploadPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
             <p style={{ fontWeight: 600, color: "var(--fg)" }}>{job.filename}</p>
             <span style={{ fontSize: "13px", fontWeight: 600, color: RESULT_COLOR[status] ?? "var(--fg)", textTransform: "capitalize" }}>
-              {status}
+              {status === "needs_review" ? "Held for review" : status}
             </span>
           </div>
 

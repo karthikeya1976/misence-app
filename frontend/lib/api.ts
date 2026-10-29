@@ -31,8 +31,9 @@ export type Job = {
   job_id: string;
   filename: string;
   file_path?: string;
-  status: "pending" | "processing" | "done";
-  overall_status?: "approved" | "flagged" | "blocked";
+  status: "pending" | "processing" | "done" | "failed";
+  // "needs_review": moderation failed after retries; hidden from every feed until a human decides
+  overall_status?: "approved" | "flagged" | "blocked" | "needs_review";
   pillars?: PillarResult[];
   reasons?: string[];
   size_bytes?: number;

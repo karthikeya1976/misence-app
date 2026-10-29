@@ -481,3 +481,41 @@ Both scripts were deliberately tested against `docs/plans/2026-09-22-001-feat-ho
 - Both new workflow YAML files parsed successfully with PyYAML (the `on:` → boolean-`True` key coercion some checks flag is a known PyYAML 1.1 artifact, confirmed present on the existing, already-working `pr-review-bot.yml` too — not a real syntax problem).
 - `scripts/scan-repo.py` — 0 new issues; both new scripts are referenced by the new workflow files, so neither is flagged as dead code.
 - Not deployed anywhere — this is CI/tooling scaffolding, not an application feature with a runtime deploy target.
+
+## 2026-10-29 — Pipeline hardening: real concurrency, retries, fail-closed, perceptual dedup, observability
+
+### Why
+`asyncio.gather` over the four pillars gave no concurrency: every pillar was an `async def` whose body made blocking calls (`boto3`, `urllib`, OpenCV) with no `await`, so each ran to completion before the next started. Failures were also masked — a pillar error returned a hash-seeded *mock* score, so a failed adult-content check could silently produce a verdict.
+
+### Changes
+- **Concurrency**: each pillar's body is now `_check_blocking()`; `check()` is `await asyncio.to_thread(_check_blocking, job_id)`. Controlled simulation (4 stub pillars, 1.0 s blocking each): 4.00 s before → 1.01 s after. Not a production measurement.
+- **Retries + fail-closed**: pillars raise `PillarError` (new, `pillars/common.py`) instead of returning a mock score when configured to use a real backend. `process_video` retries on `PillarError` with exponential backoff + jitter (2 s base, 60 s cap, max 3 retries). When retries are exhausted `ModerationTask.on_failure` sets `status = failed`, `overall_status = needs_review` and pushes the job to the dead-letter list. `needs_review` is outside the `('approved', 'flagged')` filter used by every feed/search query, so the video stays hidden. (Marking it `flagged` would have *published* it — flagged videos are visible.)
+- **Mock fallback narrowed**: mock scores remain only for local dev with no Sightengine credentials (adult / deepfake) or no S3 bucket + OpenCV (filmmaking). A deployment with `AWS_S3_BUCKET` set and OpenCV missing now fails loudly.
+- **Dead-letter path**: `backend/app/dead_letter.py` (Redis list `dlq:process_video`), `scripts/replay_dlq.py` to list / replay.
+- **Perceptual duplicate detection**: new pure module `backend/app/phash.py` — dHash of 5 evenly spaced frames (64 bits each), mean Hamming distance <= 10 = near-duplicate. New nullable `videos.phash` column (idempotent `ALTER TABLE` migration), `db.list_phashes()`. Exact SHA-256 match still scores 1.0 (blocked); a near-duplicate scores 0.85 and the decision engine now flags it (`FLAG_THRESHOLDS["duplicate_content"] = 0.8`).
+- **Observability**: `backend/app/metrics.py` publishes `VerdictLatencySeconds` (job creation → verdict, dimension `Verdict`), `QueueDepth` and `DeadLetterDepth` to CloudWatch. Disabled unless `CLOUDWATCH_NAMESPACE` is set; failures are logged and never propagate.
+- **Containers**: `backend/Dockerfile` (one image, API or worker by command, non-root), `backend/.dockerignore`, `scripts/push_ecr.sh`.
+- **Infra**: `infra/cloudformation.yml` gains a `CloudWatchMetrics` IAM policy (`cloudwatch:PutMetricData`, restricted to the `Misence/Moderation` namespace), `CLOUDWATCH_NAMESPACE` in the generated `.env`, and `opencv-python-headless` in UserData. `opencv-python-headless==4.10.0.84` added to `backend/requirements.txt` (previously installed by hand, never declared).
+- **Frontend**: `Job` type gains `failed` / `needs_review`; the upload page stops polling on `failed` and shows "Held for review".
+- **Broker resilience + backlog signal** (added after the incident below): Celery broker transport options `socket_keepalive`, `health_check_interval=30`, `retry_on_timeout`; `metrics.publish_queue_depth()` is now called by the **API on every enqueue** (a dead worker publishes nothing, so a worker-side metric cannot detect a dead worker) as well as by the worker.
+- **Tooling**: `scripts/measure_metrics.py` — runs the test suites and benchmarks a live API (latency percentiles, false-positive rate), excluding runs that used a mock / error fallback.
+
+### Verification
+- `tests/test_pipeline_hardening.py` (15 tests): real-thread concurrency (4 x 0.3 s blocking pillars finish in < 0.6 s), `PillarError` propagation, retry configuration, a persistent failure retried 1 + 3 times via Celery's eager `apply()` and ending `needs_review` with a dead-letter entry and no `approved` write, success path + latency metric, dead-letter push / depth / ordered drain, metrics disabled / enabled / failure-swallowing, dHash and near-duplicate matching. 3 new decision-engine tests (near-duplicate flagged, exact blocked, unique approved).
+- Full local suite: all pass (live-DB modules skip without `POSTGRES_URL`). Frontend: `tsc --noEmit` clean, 171 vitest tests pass. `pip-audit` reports no findings for the new OpenCV pin (existing `starlette` / `ecdsa` findings are unchanged). `scripts/scan-repo.py`: 16 issues before and after, none new.
+
+### Production incident found while deploying (2026-10-29)
+- The production Celery worker had been **silently dead since 2026-10-06 21:42 UTC**: it logged `Connection to broker lost. Trying to re-establish` after a Redis `Connection reset by peer`, never logged `ready` again, and stayed `active (running)` — so systemd never restarted it. Uploads sat in `pending` for ~23 days (4 jobs were queued when found). Fixed operationally by `systemctl restart redactor-celery` (jobs then processed normally); the keepalive / health-check settings above are a mitigation, not a proven root-cause fix. The `QueueDepth` alarm below is the detection.
+- Baseline on the *pre-PR* code after the restart: 6 uploads of 3 real clips, **median 17.2 s upload -> verdict (p95 ~43 s)**, 0 mock / error fallbacks; the 10 MB 1080p clip took 33-43 s.
+
+### Infra actions taken (2026-10-29)
+- ECR repository `misence-backend` (scan-on-push) created; image built from `backend/Dockerfile` and pushed (`:e3cb609`, `:latest`, ~160 MB). Smoke-tested: all app modules import, OpenCV 4.10, runs as uid 1000.
+- SNS topic `misence-alerts` and CloudWatch alarm `misence-dead-letter-jobs` (`DeadLetterDepth > 0`) created. The topic has **no subscribers yet**.
+- **CloudFormation stack `redactor-v2` was NOT updated.** A change set showed the `UserData` edit has `RequiresRecreation: Conditionally` on the EC2 instance, which has no Elastic IP and was configured by hand — a replacement would change its address and wipe it. Do not run `cloudformation deploy` against this stack without reviewing a change set first. The `CloudWatchMetrics` IAM policy has to be attached to `redactor-ec2-role` directly (`aws iam put-role-policy`) instead.
+
+### Not done / not verified
+- **Code not deployed to EC2 yet** (blocked on the PR's security gate, see below). No post-change latency measurement yet.
+- The PR's `security-scan` fails on 6 *new* advisories unrelated to this change (`python-jose` PYSEC-2026-4298, no fix published; `vitest`/`tinypool`/`vite`/`zod`/`source-map-js` in the frontend toolchain). They need a human decision in `.ci/security-baseline.json`.
+- Perceptual-hash accuracy was only checked on synthetic photo-like video (resized / re-encoded / brightened copies: distance 0-0.2; unrelated videos: 30-35; threshold 10), not on real film footage. A first attempt with flat-colour clips gave meaningless distances (15 vs 18) because dHash needs gradients — `tests/test_phash_opencv.py` uses textured frames and skips when OpenCV is absent.
+- CloudFormation changes only affect a *new* stack. The existing EC2 instance needs: stack update for the IAM policy, `CLOUDWATCH_NAMESPACE=Misence/Moderation` appended to `/app/.env`, `opencv-python-headless` confirmed installed in the venv, then `sudo systemctl restart redactor-api redactor-celery`. The `phash` column is added automatically on API startup.
+- Near-duplicate matching is a linear scan over stored fingerprints, aligned by frame position — a trimmed or re-cut video will not match.
