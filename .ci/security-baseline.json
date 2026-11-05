@@ -38,18 +38,6 @@
   "pip-audit:ecdsa:PYSEC-2026-1325": {
     "reason": "Transitive dependency of python-jose[cryptography]. No fix version published by the ecdsa maintainers as of this baseline entry -- nothing to bump to yet. Re-evaluate when a fix ships."
   },
-  "pip-audit:pyasn1:PYSEC-2026-2263": {
-    "reason": "Transitive dependency pinned by python-jose[cryptography]==3.4.0's own dependency spec, not directly controllable from this repo's requirements.txt without risking an incompatibility python-jose doesn't itself expect. Track alongside the python-jose maintainers' own pyasn1 pin."
-  },
-  "pip-audit:pyasn1:PYSEC-2026-3456": {
-    "reason": "Same as PYSEC-2026-2263 -- transitive via python-jose[cryptography]."
-  },
-  "pip-audit:pyasn1:PYSEC-2026-3457": {
-    "reason": "Same as PYSEC-2026-2263 -- transitive via python-jose[cryptography]."
-  },
-  "pip-audit:pyasn1:PYSEC-2026-3455": {
-    "reason": "Same as PYSEC-2026-2263 -- transitive via python-jose[cryptography]."
-  },
   "npm-audit:brace-expansion": {
     "reason": "Transitive build-tooling dependency (not shipped to the browser bundle). DoS via crafted glob patterns -- not reachable with user-controlled input in this app's build process."
   },
@@ -70,5 +58,14 @@
   },
   "npm-audit:sharp": {
     "reason": "Transitive dependency of Next.js's image optimization pipeline (libvips CVEs). This app does not currently use next/image for any user-uploaded content path -- re-evaluate if/when it does."
+  },
+  "pip-audit:python-jose:PYSEC-2026-4298": {
+    "reason": "Researched the actual mechanism, not just the CVSS score (critical/9.1-9.3): this is a 2026 re-opening of the long-running python-jose algorithm-confusion bug (CVE-2026-85394, an incomplete fix for CVE-2024-33663) -- exploitable only when a service's verification key is actually an RSA/EC PUBLIC key that gets fed into an HMAC (HS256) code path, letting an attacker forge a token using that public key as if it were a symmetric secret. This app never has that precondition: python-jose is used only for JWS signing (jwt.encode/jwt.decode), every call site hardcodes algorithm=\"HS256\" on encode and algorithms=[\"HS256\"] as an explicit allow-list on decode, the signing secret is self-controlled (never a public key), there is no RS256/ES256 code path anywhere to confuse with HS256, and no external/untrusted issuer is ever trusted. No fix version is published yet (confirmed via OSV/GitLab Advisory DB/VulnCheck/GHSA, which also disagree with each other on the eventual fixed-version boundary -- the vulnerability mechanism itself is what's reliably confirmed, not the fix timeline). Re-evaluate if this app's auth model ever introduces a mixed asymmetric/symmetric key flow. Reviewed 2026-11-04."
+  },
+  "npm-audit:tinypool": {
+    "reason": "Transitive dependency of vitest (test-only tooling, never shipped to the browser bundle or reachable with runtime user input). Fix requires vitest@5.1.0, a semver-major bump from the current ^3.0.5 -- a real breaking-change risk for the test suite, deferred to its own dedicated PR rather than bundled silently into a security-baseline update. Track alongside the vitest finding below."
+  },
+  "npm-audit:vitest": {
+    "reason": "Same underlying fix as tinypool above -- vitest@5.1.0 is a semver-major bump, deferred to its own dedicated PR. The vulnerable path (prototype pollution via tinypool worker options) requires untrusted input to reach vitest's own worker-pool configuration, which this app's test suite never does (it only runs this repo's own authored test files, not user-controlled input)."
   }
 }

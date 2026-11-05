@@ -27,11 +27,22 @@ httpx==0.28.1
 # pipeline; bcrypt is pinned because passlib 1.7.4 cannot detect newer
 # bcrypt releases' version string and CryptContext.hash() fails outright —
 # confirmed locally, same pin CloudFormation's UserData already uses.
-python-jose[cryptography]==3.4.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 boto3==1.35.71
 python-dotenv==1.2.2
+# python-jose 3.4.0 pins pyasn1<0.5.0 (confirmed via a real pip resolver
+# conflict, not just reading its own Requires-Dist metadata — the two
+# disagreed; the resolver's answer is the one that actually matters for
+# `pip install -r requirements.txt` to succeed), which resolves to 0.4.8
+# and carries 4 real CVEs (CVE-2026-119194 through -119197) discovered
+# after PR #50's baseline was written. 3.5.0 allows pyasn1>=0.5.0, letting
+# the pin below fix those 4 CVEs cleanly — it does NOT fix PYSEC-2026-4298
+# (python-jose's own still-unpatched algorithm-confusion CVE, baselined
+# separately with its own reasoning), confirmed via pip-audit against the
+# live-installed 3.5.0: that finding persists on 3.5.0 too.
+pyasn1==0.6.5
 # Frame sampling for the adult-content / deepfake / filmmaking / perceptual-hash pillars.
 # Previously installed by hand on EC2 only; without it a real deployment cannot extract frames.
 opencv-python-headless==4.10.0.84

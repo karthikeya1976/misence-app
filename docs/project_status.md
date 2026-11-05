@@ -242,7 +242,8 @@
 - [ ] Subscribe an address to SNS topic `misence-alerts` (alarms currently notify nobody)
 - [ ] Attach the `CloudWatchMetrics` inline policy to `redactor-ec2-role` and set `CLOUDWATCH_NAMESPACE=Misence/Moderation` in `/app/.env` (metrics stay off until both are done)
 - [ ] Create a `QueueDepth` backlog alarm once metrics are flowing
-- [ ] Resolve the 6 new security-gate findings (human decision in `.ci/security-baseline.json`), merge the PR, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
+- [x] Resolved the security-gate findings blocking PR #53 (2026-11-04): `source-map-js`/`vite`/`zod` fixed via `npm audit fix`; `python-jose` bumped 3.4.0→3.5.0 + `pyasn1==0.6.5` pinned, fixing 4 newly-surfaced pyasn1 CVEs (resolver-conflict gotcha found and corrected along the way — see `docs/changelog.md`); `python-jose`'s own `PYSEC-2026-4298` and `tinypool`/`vitest` (needs breaking `vitest@5.1.0`) baselined with researched, mechanism-level reasons. `scripts/security_gate.py` passes; 171 backend tests + 171 frontend tests green.
+- [ ] Merge PR #53, `sudo git -C /app pull`, restart `redactor-api` + `redactor-celery`, re-run `scripts/measure_metrics.py bench` for the post-change latency (pre-change baseline: median 17.2 s, n=6)
 - [x] Python 3.9 compatibility fix + AST guard test (`tests/test_python39_compat.py`), verified in a `python:3.9-slim` container
 - [x] Load-test tool (`scripts/load_test.py`) + baseline on the pre-fix production code (8 real jobs: ~16 s each, 3.7 jobs/min; ack median 1.6 s). The run exhausted the Sightengine daily quota -> 4 jobs used mock fallbacks and were excluded
 - [ ] Deploy #52/#53 so pillar failures fail closed (until then, a provider outage / quota exhaustion silently yields mock nudity+deepfake scores in production)
