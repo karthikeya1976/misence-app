@@ -519,3 +519,46 @@ Both scripts were deliberately tested against `docs/plans/2026-09-22-001-feat-ho
 - Perceptual-hash accuracy was only checked on synthetic photo-like video (resized / re-encoded / brightened copies: distance 0-0.2; unrelated videos: 30-35; threshold 10), not on real film footage. A first attempt with flat-colour clips gave meaningless distances (15 vs 18) because dHash needs gradients — `tests/test_phash_opencv.py` uses textured frames and skips when OpenCV is absent.
 - CloudFormation changes only affect a *new* stack. The existing EC2 instance needs: stack update for the IAM policy, `CLOUDWATCH_NAMESPACE=Misence/Moderation` appended to `/app/.env`, `opencv-python-headless` confirmed installed in the venv, then `sudo systemctl restart redactor-api redactor-celery`. The `phash` column is added automatically on API startup.
 - Near-duplicate matching is a linear scan over stored fingerprints, aligned by frame position — a trimmed or re-cut video will not match.
+
+## 2026-10-29 — Production is Python 3.9: compatibility fix + guard (found by smoke-testing before restart)
+
+### What happened
+Fast-forwarding the EC2 checkout to the merged PR #52 and import-testing as the service user (before restarting anything) failed: `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'` in `metrics.py`. The server's system `python3` is **3.9.25**; the new modules used PEP 604 `X | None` annotations, which are a runtime error before 3.10. CI and dev machines run 3.12, so nothing caught it. The running services were never restarted, so there was no outage; the server checkout was rolled back to the known-good `92caf0a` until the fix was ready.
+
+### Changes
+- `from __future__ import annotations` added to `metrics.py`, `phash.py`, `pillars/duplicate_content.py`, `tasks.py`.
+- `tests/test_python39_compat.py`: AST guard that fails if any backend module uses `X | Y` in an annotation without the `__future__` import (the exact bug class), plus a test that the guard detects it.
+
+### Verification
+- Full suite run inside `python:3.9-slim` (3.9.25, same patch version as the server): all backend modules import; 39 passed, 4 skipped (live-DB). The two R&D CI-tooling test files are excluded there because the scripts they test only run on CI's 3.12.
+
+### Still open (found, not fixed here)
+- `backend/requirements.txt` pins `python-multipart==0.0.32` and `python-dotenv==1.2.2`, which **do not exist for Python 3.9** (latest 3.9 builds: 0.0.20 and 1.2.1). That is why the server has `python-multipart 0.0.20`: the dependency bump from the JWT/security PR (#50) cannot be applied to production as long as it runs 3.9. Fix = move the server to Python 3.11+ (Amazon Linux 2023 ships `python3.11`) and update the systemd `ExecStart` lines; until then the pinned versions are only correct for CI / Docker (3.12).
+- The Docker image uses Python 3.12 while production uses 3.9 — the image is not a faithful rehearsal of production until the server is upgraded.
+- The "Update Test Baseline" workflow fails on `main` since branch protection was enabled (`GH006: Protected branch update failed`); the regression baseline is therefore stale.
+
+### Load-test baseline on the current production code (2026-10-29, pre-#52 behaviour: 1 solo worker, sequential pillars)
+- New `scripts/load_test.py` (stdlib only): N simultaneous uploads, reports ack latency, verdict latency p50/p95/max and throughput. After this run it was changed to detect fallback jobs itself and compute latency/throughput from real-work jobs only.
+- Burst of 12 simultaneous uploads (0.7 MB and 1.0 MB clips). **The run exhausted the Sightengine free plan's daily quota**: the last 4 jobs got `HTTP 400: Daily usage limit reached` on the adult-content and deepfake pillars, and (pre-fail-closed code) silently fell back to mock scores, finishing in ~3.7 s each. An initial summary that reported "12 jobs in 147.5 s, 4.9 jobs/min" was therefore wrong and has been retracted.
+- Corrected figures from the 8 real-work jobs (server timestamps): **~16 s per job (median gap between completions), 3.7 jobs/min, verdict wait median 71.5 s / max 128.6 s**. POST acknowledgment (client-side, unaffected by the fallback): median 1.6 s, max 2.0 s — the API stays responsive while the queue backs up; the single worker is the bottleneck.
+- **Production exposure created by this run**: while the daily quota is exhausted, uploads to the *deployed* (pre-#52) code get fake adult-content / deepfake scores instead of an error. That is exactly the fail-open behaviour #52 removes, but #52 is not deployed yet. Resets with the provider's daily window; confirm in the Sightengine dashboard.
+- Lessons: (1) load-test against a provider with a free-tier quota burns the quota — use a mock provider or a paid test key; (2) any performance number must be filtered for fallback runs, which `measure_metrics.py bench` already did and `load_test.py` now does; (3) the same quota is a production capacity limit (~10 Sightengine calls per video).
+- Not measured (blocked on deploying the merged code and on permission to start extra worker processes on the server): post-fix single-job latency and multi-worker throughput.
+- Each run created real (blocked-as-duplicate, hidden) jobs on the production database under the test account.
+
+## 2026-11-04 — Resolved PR #53's `security-scan` failure (not a merge conflict)
+
+PR #53 ("fix: Python 3.9 compatibility...") was blocked on CI, reported by GitHub as `UNSTABLE`/showing as having issues to resolve — not an actual git merge conflict (`mergeable: MERGEABLE` the whole time), but the `security-scan` gate correctly failing on real findings the PR's own description had already honestly flagged as unresolved.
+
+### Findings resolved
+- **`source-map-js`, `vite`, `zod`** (npm) — fixed cleanly via `npm audit fix` (no `--force`, no `package.json` changes — existing `^` version ranges already permitted the patched versions; only `package-lock.json` changed). Verified: `tsc --noEmit` clean, `npx vitest run` 171/171 passed, `npm run build` clean.
+- **`pyasn1` — 4 new CVEs (`CVE-2026-119194` through `-119197`)**, discovered by the scanner during this review, not part of the original 6 the PR description listed (published in the weeks since the PR's last CI run — the gate is correctly catching real drift, not a stale check). Root cause: `python-jose==3.4.0` pins `pyasn1<0.5.0` (confirmed via an actual `pip` resolver conflict, not just reading `python-jose`'s own `Requires-Dist` metadata, which misleadingly still claims `pyasn1>=0.5.0` — the resolver's real answer is authoritative). Fixed by bumping `python-jose[cryptography]` to `3.5.0` (which allows `pyasn1>=0.5.0`) and pinning `pyasn1==0.6.5` explicitly. Confirmed via `pip-audit` against the live-installed combination that this does NOT also fix `python-jose`'s own CVE below (it's a separate, still-unpatched issue) — the bump is worth it purely for the 4 real `pyasn1` CVEs it resolves. Full backend suite (171 tests) re-run clean after the bump.
+- **`python-jose` `PYSEC-2026-4298`** — researched the actual vulnerability mechanism, not just the CVSS score (critical, 9.1-9.3): it's a 2026 re-opening of python-jose's long-running algorithm-confusion bug (CVE-2026-85394, an incomplete fix for CVE-2024-33663), exploitable only when a service's JWT verification key is actually an RSA/EC public key that gets fed into an HS256/HMAC code path — letting an attacker forge tokens using the public key as if it were a symmetric secret. This app's auth model has no such precondition: `jwt.encode`/`jwt.decode` are hardcoded to `algorithm="HS256"` everywhere, the signing secret is self-controlled and never a public key, there's no RS256/ES256 path to confuse with HS256, and no external/untrusted issuer is ever trusted. No fix version exists yet (confirmed persisting even on 3.5.0). Baselined with the full reasoning recorded, not dismissed.
+- **`tinypool`, `vitest`** (npm) — fix requires `vitest@5.1.0`, a real semver-major bump from the current `^3.0.5`. Deliberately deferred to its own dedicated PR rather than bundled silently into this baseline update — same precedent as the already-baselined `next`/`pytest`/`starlette` entries, all genuine fixes requiring a breaking-change PR of their own.
+
+### Verification
+- Full backend suite (`pytest tests/`, live Postgres) — 171 passed, 3 skipped, both before and after the `python-jose`/`pyasn1` bump.
+- Frontend: `tsc --noEmit` clean, `npx vitest run` 171/171 passed, `npm run build` clean, after the `npm audit fix`.
+- `scripts/security_gate.py` re-run end-to-end against fresh `bandit`/`pip-audit`/`npm-audit` output and the updated `.ci/security-baseline.json` — exit 0, confirmed passing before pushing.
+- Removed 4 now-obsolete `pyasn1` baseline entries (fixed by the version bump, no longer appear in scan output at all) rather than leaving dead entries in the baseline file.
+- A network issue (SSH to github.com, port 22, timing out on this connection) blocked `git fetch`/`gh`'s default SSH git protocol mid-session; worked around with a temporary HTTPS remote authenticated via `gh`'s own OAuth token (port 443, unaffected) — reversible, session-local, not a change to the user's persistent git config.

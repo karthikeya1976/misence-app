@@ -4,6 +4,8 @@ Metrics must never break moderation: every failure here is logged and swallowed.
 EC2 needs cloudwatch:PutMetricData (granted in infra/cloudformation.yml).
 """
 
+from __future__ import annotations
+
 import logging
 
 import boto3

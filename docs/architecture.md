@@ -506,7 +506,7 @@ doesn't reproduce the bug — it dispatches events differently).
 | S3 | `amzn-s3-bucket-dvm` | us-east-2; videos + extracted frames |
 | Nginx | EC2 | TLS termination; proxies :443 → :8088 |
 | Let's Encrypt | DuckDNS `redactor-api.duckdns.org` | Auto-renewed HTTPS cert |
-| Vercel | Next.js | `https://distributed-video-moderation.vercel.app` |
+| Vercel | Next.js | `https://misence.vercel.app` |
 
 Defined in `infra/cloudformation.yml` (CloudFormation — not Terraform). EC2 systemd services: `redactor-api` and `redactor-celery`. **Caution**: the live instance was configured by hand and has no Elastic IP; a `UserData` change in the template marks the instance for conditional replacement, so never execute a stack update on `redactor-v2` without reviewing a change set.
 
